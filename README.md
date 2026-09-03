@@ -31,12 +31,21 @@ type, and forget about it.
 ## Usage
 
 ```bash
-ghostnote              # launch, or reveal a running widget
-ghostnote --new        # launch and start a new page
-ghostnote --quit       # fully quit a running widget
-ghostnote --debug      # run attached, with logs in the terminal
-ghostnote --devtools   # open DevTools
+ghostnote                      # launch, or reveal a running widget
+ghostnote --new                # launch and start a new page
+ghostnote --quit               # fully quit a running widget
+ghostnote --disable-autostart  # stop launching at login
+ghostnote --enable-autostart   # launch at login again
+ghostnote --debug              # run attached, with logs in the terminal
+ghostnote --devtools           # open DevTools
 ```
+
+### Starting with your computer
+
+The first launch registers GhostNote to start with your OS, so the terminal is
+a one-time step — after a restart it reappears on the same edge, on the same
+page, with all your notes. Turn it off from the tray menu (**Start With
+Windows**) or with `ghostnote --disable-autostart`; the choice sticks.
 
 Once it's running it lives in your system tray. Right-click the tray icon to
 dock it, fold it, open the data folder, or quit.

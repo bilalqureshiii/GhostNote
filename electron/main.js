@@ -40,6 +40,7 @@ const { pathToFileURL } = require('url');
 const { Store, MAX_PAGES } = require('./store');
 
 const RENDERER_OUT = path.join(__dirname, '..', 'renderer', 'out');
+const APP_ROOT = path.join(__dirname, '..');
 
 // The panel reshapes to suit the edge it hangs from: portrait down the sides,
 // landscape along the top and bottom.
@@ -100,6 +101,8 @@ app.on('second-instance', (_event, argv) => {
     quitApp();
     return;
   }
+  if (argv.includes('--enable-autostart')) setAutostart(true);
+  if (argv.includes('--disable-autostart')) setAutostart(false);
   if (argv.includes('--new')) send('new-page');
   showWidget();
 });
@@ -511,6 +514,70 @@ function quitApp() {
 }
 
 // ---------------------------------------------------------------------------
+// Start with the OS
+//
+// The widget is unpackaged (it runs as `electron.exe <app dir>`), so the login
+// item has to name both the binary and the app directory. Left to itself,
+// Windows would register bare electron.exe and launch a blank Electron shell.
+// ---------------------------------------------------------------------------
+// What Electron named the entry before we passed an explicit `name`. Must be
+// spelled out: setAppUserModelId() changes what the default would resolve to.
+const LEGACY_LOGIN_NAME = 'electron.app.Electron';
+
+function loginItemOptions() {
+  return process.platform === 'win32'
+    ? {
+        path: process.execPath,
+        args: [APP_ROOT],
+        // Without this the registry value is named "electron.app.Electron",
+        // which is what the user would see in Task Manager > Startup.
+        name: 'GhostNote',
+      }
+    : {};
+}
+
+/** True when an earlier build's default-named registry entry is still there. */
+function hasLegacyLoginItem() {
+  if (process.platform !== 'win32') return false;
+  try {
+    return app.getLoginItemSettings({ path: process.execPath, args: [APP_ROOT], name: LEGACY_LOGIN_NAME }).openAtLogin;
+  } catch (_) {
+    return false;
+  }
+}
+
+/**
+ * Earlier builds registered under Electron's default value name. Clear it so
+ * the widget can't end up launched twice from two registry entries.
+ */
+function clearLegacyLoginItem() {
+  if (process.platform !== 'win32') return;
+  try {
+    app.setLoginItemSettings({ openAtLogin: false, path: process.execPath, args: [APP_ROOT] });
+  } catch (_) {
+    /* best effort */
+  }
+}
+
+function isAutostartEnabled() {
+  try {
+    return app.getLoginItemSettings(loginItemOptions()).openAtLogin;
+  } catch (_) {
+    return false;
+  }
+}
+
+function setAutostart(enabled) {
+  try {
+    clearLegacyLoginItem();
+    app.setLoginItemSettings({ openAtLogin: enabled, ...loginItemOptions() });
+  } catch (err) {
+    console.warn('[ghostnote] could not update the login item:', err.message);
+  }
+  updateTrayMenu();
+}
+
+// ---------------------------------------------------------------------------
 // Tray
 // ---------------------------------------------------------------------------
 /** Rebuilt on every dock change so the radio state matches reality. */
@@ -533,6 +600,12 @@ function updateTrayMenu() {
       },
       { label: 'Fold / Unfold', click: () => { showWidget(); setCollapsed(!dock.collapsed); } },
       { type: 'separator' },
+      {
+        label: 'Start With Windows',
+        type: 'checkbox',
+        checked: isAutostartEnabled(),
+        click: (item) => setAutostart(item.checked),
+      },
       { label: `Toggle:  ${HOTKEY.replace('CommandOrControl', 'Ctrl')}`, enabled: false },
       { label: 'Open Data Folder', click: () => shell.showItemInFolder(store.file) },
       { type: 'separator' },
@@ -592,6 +665,10 @@ function registerIpc() {
 // Lifecycle
 // ---------------------------------------------------------------------------
 app.whenReady().then(() => {
+  // Identifies the widget to the shell (tray, notifications, startup list)
+  // rather than inheriting Electron's generic identity.
+  if (process.platform === 'win32') app.setAppUserModelId('com.ghostnote.widget');
+
   // Keeps the widget out of the Windows taskbar / macOS dock entirely.
   if (process.platform === 'darwin' && app.dock) app.dock.hide();
 
@@ -602,6 +679,17 @@ app.whenReady().then(() => {
   registerIpc();
   createWindow();
   createTray();
+
+  // Opt out / back in from the terminal.
+  if (process.argv.includes('--disable-autostart')) setAutostart(false);
+  else if (process.argv.includes('--enable-autostart')) setAutostart(true);
+  else if (hasLegacyLoginItem() && !isAutostartEnabled()) {
+    setAutostart(true); // migrate the old electron.app.Electron entry across
+  } else if (!store.load().settings.autostartInitialised) {
+    // First ever run: start with the OS, so the terminal is needed only once.
+    setAutostart(true);
+    store.update({ settings: { autostartInitialised: true } });
+  }
 
   if (!globalShortcut.register(HOTKEY, toggleWidget)) {
     console.warn(`[ghostnote] hotkey ${HOTKEY} is already taken by another app.`);
@@ -616,6 +704,17 @@ app.on('window-all-closed', (event) => {
 });
 
 app.on('before-quit', () => {
+  isQuitting = true;
+  store.flush();
+});
+
+/**
+ * Windows fires this when the OS is shutting down or logging you out, and it
+ * is NOT preceded by a reliable 'before-quit'. Without it, the close handler
+ * would also try to veto the window's close during shutdown. Flush first, and
+ * mark ourselves as quitting so the window is allowed to go.
+ */
+app.on('session-end', () => {
   isQuitting = true;
   store.flush();
 });

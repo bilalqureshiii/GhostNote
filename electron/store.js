@@ -32,6 +32,7 @@ function defaultData() {
     activeIndex: 0,
     pages: [blankPage('First Note')],
     dock: null,
+    settings: { autostartInitialised: false },
   };
 }
 
@@ -78,6 +79,11 @@ function normalise(input) {
     activeIndex: Math.min(Math.max(0, Number(input.activeIndex) || 0), pages.length - 1),
     pages,
     dock,
+    settings: {
+      // Records that first-run autostart has been applied, so a user who
+      // later switches it off doesn't get it switched back on next launch.
+      autostartInitialised: Boolean(input.settings && input.settings.autostartInitialised),
+    },
   };
 }
 

@@ -174,16 +174,44 @@ export default function GhostNote() {
   }, [dock.collapsed, dock.edge, ready]);
 
   // --- persistence --------------------------------------------------------
+  /** Latest unsaved snapshot, so we can force it out early if needed. */
+  const pending = useRef(null);
+
   const queueSave = useCallback((nextPages, nextIndex) => {
     setStatus('typing…');
+    pending.current = { pages: nextPages, activeIndex: nextIndex };
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
       const g = bridge();
-      if (!g) return;
-      const res = await g.save({ pages: nextPages, activeIndex: nextIndex });
+      if (!g || !pending.current) return;
+      const snapshot = pending.current;
+      pending.current = null;
+      const res = await g.save(snapshot);
       setStatus(res?.ok ? 'saved' : 'save failed');
     }, 300);
   }, []);
+
+  /** Skips the debounce — used when we might be about to lose the window. */
+  const flushNow = useCallback(() => {
+    if (!pending.current) return;
+    clearTimeout(saveTimer.current);
+    const snapshot = pending.current;
+    pending.current = null;
+    bridge()?.save(snapshot);
+  }, []);
+
+  // A shutdown, a hide, or clicking away can all cut the debounce short.
+  useEffect(() => {
+    const onHide = () => document.visibilityState === 'hidden' && flushNow();
+    window.addEventListener('blur', flushNow);
+    window.addEventListener('beforeunload', flushNow);
+    document.addEventListener('visibilitychange', onHide);
+    return () => {
+      window.removeEventListener('blur', flushNow);
+      window.removeEventListener('beforeunload', flushNow);
+      document.removeEventListener('visibilitychange', onHide);
+    };
+  }, [flushNow]);
 
   const onType = (value) => {
     const next = pages.map((p, i) =>

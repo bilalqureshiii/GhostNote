@@ -29,6 +29,8 @@ if (has('-h', '--help')) {
       `    ghostnote                launch the widget, or reveal it if already running\n` +
       `    ghostnote --new          launch/reveal and start a new note page\n` +
       `    ghostnote --quit         fully quit a running widget\n` +
+      `    ghostnote --disable-autostart   stop launching at login\n` +
+      `    ghostnote --enable-autostart    launch at login again\n` +
       `    ghostnote --debug        launch attached, streaming main/renderer logs to this terminal\n` +
       `    ghostnote --devtools     launch detached with DevTools opened\n` +
       `\n  Once running:  Ctrl+Shift+Space toggles it  ·  tray icon -> Quit GhostNote\n` +
