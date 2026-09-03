@@ -1,0 +1,396 @@
+<meta charset="utf-8" />
+<title>GhostNote</title>
+<style>
+  html,
+  body {
+    margin: 0;
+    height: 100%;
+    background: transparent;
+    overflow: hidden;
+  }
+
+  /* The stage carries the perspective the hinge rotates within. Its origin
+     sits on the docked edge so the panel folds *into* the screen border. */
+  #stage {
+    height: 100%;
+    perspective: 1100px;
+  }
+  body[data-edge='right'] #stage { perspective-origin: right center; }
+  body[data-edge='left']  #stage { perspective-origin: left center; }
+  body[data-edge='top']   #stage { perspective-origin: center top; }
+  body[data-edge='bottom']#stage { perspective-origin: center bottom; }
+
+  /* ---------------- expanded panel ---------------- */
+  .shell {
+    box-sizing: border-box;
+    height: 100%;
+    background: rgba(12, 12, 15, 0.97);
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    color: #e7e5e4;
+    font: 13px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    will-change: transform, opacity;
+  }
+
+  /* The docked side is squared off and loses its border, so the panel reads
+     as growing out of the screen edge. The hinge lives on that same side. */
+  body[data-edge='right'] .shell {
+    border-radius: 18px 0 0 18px;
+    border-right: 0;
+    transform-origin: right center;
+  }
+  body[data-edge='left'] .shell {
+    border-radius: 0 18px 18px 0;
+    border-left: 0;
+    transform-origin: left center;
+  }
+  body[data-edge='top'] .shell {
+    border-radius: 0 0 18px 18px;
+    border-top: 0;
+    transform-origin: center top;
+  }
+  body[data-edge='bottom'] .shell {
+    border-radius: 18px 18px 0 0;
+    border-bottom: 0;
+    transform-origin: center bottom;
+  }
+
+  header {
+    -webkit-app-region: drag;
+    flex: 0 0 auto;
+    padding: 10px 12px 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  }
+  .dots { display: flex; gap: 4px; }
+  .dots i {
+    width: 3px;
+    height: 3px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.25);
+  }
+  h1 {
+    font-family: "Playfair Display", Georgia, serif;
+    font-weight: 500;
+    font-size: 15px;
+    margin: 0;
+    flex: 1;
+    letter-spacing: 0.01em;
+  }
+  .status {
+    font-size: 10px;
+    color: rgba(231, 229, 228, 0.3);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* The fold trigger. Its chevron always points at the docked edge. */
+  .fold {
+    -webkit-app-region: no-drag;
+    width: 22px;
+    height: 22px;
+    border-radius: 6px;
+    border: 0;
+    background: transparent;
+    color: rgba(231, 229, 228, 0.4);
+    display: grid;
+    place-items: center;
+    cursor: pointer;
+    padding: 0;
+  }
+  .fold:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: #e7e5e4;
+  }
+  .fold svg { width: 13px; height: 13px; }
+
+  /* Base glyph points right; rotate per edge. */
+  body[data-edge='left']   .fold svg { transform: rotate(180deg); }
+  body[data-edge='top']    .fold svg { transform: rotate(-90deg); }
+  body[data-edge='bottom'] .fold svg { transform: rotate(90deg); }
+
+  textarea {
+    -webkit-app-region: no-drag;
+    flex: 1;
+    border: 0;
+    outline: 0;
+    resize: none;
+    background: transparent;
+    color: #e7e5e4;
+    font: 13px/1.7 ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+    padding: 14px;
+  }
+  textarea::placeholder { color: rgba(231, 229, 228, 0.25); }
+
+  footer {
+    -webkit-app-region: no-drag;
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 12px;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+  }
+  button.pill {
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.13);
+    background: transparent;
+    color: rgba(231, 229, 228, 0.6);
+    font: inherit;
+    font-size: 10.5px;
+    padding: 4px 11px;
+    cursor: pointer;
+  }
+  button.pill:hover {
+    background: rgba(255, 255, 255, 0.07);
+    color: #e7e5e4;
+  }
+  .path {
+    flex: 1;
+    font-family: ui-monospace, Consolas, monospace;
+    font-size: 9px;
+    color: rgba(231, 229, 228, 0.22);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    direction: rtl;
+  }
+
+  /* ---------------- folded tab ---------------- */
+  .tab {
+    /* The whole tab drags, so a folded widget can still be repositioned. */
+    -webkit-app-region: drag;
+    position: absolute;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: rgba(12, 12, 15, 0.97);
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    cursor: pointer;
+    will-change: transform, opacity;
+  }
+  body[data-edge='right'] .tab {
+    border-radius: 8px 0 0 8px;
+    border-right: 0;
+    transform-origin: right center;
+  }
+  body[data-edge='left'] .tab {
+    border-radius: 0 8px 8px 0;
+    border-left: 0;
+    transform-origin: left center;
+  }
+  body[data-edge='top'] .tab {
+    border-radius: 0 0 8px 8px;
+    border-top: 0;
+    transform-origin: center top;
+  }
+  body[data-edge='bottom'] .tab {
+    border-radius: 8px 8px 0 0;
+    border-bottom: 0;
+    transform-origin: center bottom;
+  }
+
+  /* A drag region eats mouse events, so the clickable part opts back out.
+     It stays small, leaving most of the tab as grab area. */
+  .tab-hit {
+    -webkit-app-region: no-drag;
+    border: 0;
+    padding: 0;
+    background: transparent;
+    display: grid;
+    place-items: center;
+    cursor: pointer;
+    border-radius: 5px;
+  }
+  body[data-edge='left'] .tab-hit,
+  body[data-edge='right'] .tab-hit {
+    width: 100%;
+    height: 30px;
+  }
+  body[data-edge='top'] .tab-hit,
+  body[data-edge='bottom'] .tab-hit {
+    width: 30px;
+    height: 100%;
+  }
+  .tab-hit:hover { background: rgba(255, 255, 255, 0.1); }
+
+  .tab svg { width: 11px; height: 11px; color: rgba(231, 229, 228, 0.5); }
+  /* Tab chevron points back out toward the screen centre — the inverse. */
+  body[data-edge='right']  .tab svg { transform: rotate(180deg); }
+  body[data-edge='left']   .tab svg { transform: none; }
+  body[data-edge='top']    .tab svg { transform: rotate(90deg); }
+  body[data-edge='bottom'] .tab svg { transform: rotate(-90deg); }
+
+  .tab:hover { background: rgba(22, 22, 27, 0.98); }
+  .tab:hover svg { color: #e7e5e4; }
+
+  body[data-collapsed='true'] .shell { display: none; }
+  body[data-collapsed='true'] .tab { display: flex; }
+
+  /* Folded, the window IS the tab, so make the entire surface a drag handle —
+     including any sliver the tab's own box might not cover. The chevron opts
+     back out below, so clicking still unfolds. */
+  body[data-collapsed='true'],
+  body[data-collapsed='true'] #stage {
+    -webkit-app-region: drag;
+  }
+</style>
+
+<body data-edge="right" data-collapsed="false">
+  <div id="stage">
+    <div class="shell" id="shell">
+      <header>
+        <span class="dots"><i></i><i></i><i></i></span>
+        <h1>GhostNote</h1>
+        <span class="status" id="status">loading…</span>
+        <button class="fold" id="fold" title="Fold into edge">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+               stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 18l6-6-6-6" />
+          </svg>
+        </button>
+      </header>
+
+      <textarea id="body" placeholder="Start typing — it saves itself." spellcheck="true"></textarea>
+
+      <footer>
+        <span class="path" id="path"></span>
+        <button class="pill" id="reveal">Folder</button>
+        <button class="pill" id="hide">Hide</button>
+        <button class="pill" id="quit">Quit</button>
+      </footer>
+    </div>
+
+    <div class="tab" id="tab">
+      <!-- The tab drags; this inner hit area is the only part that clicks. -->
+      <button class="tab-hit" id="tabHit" title="Unfold">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"
+             stroke-linecap="round" stroke-linejoin="round">
+          <path d="M9 18l6-6-6-6" />
+        </svg>
+      </button>
+    </div>
+  </div>
+</body>
+
+<script>
+  const api = window.ghostnote;
+  const $body = document.getElementById('body');
+  const $status = document.getElementById('status');
+  const $path = document.getElementById('path');
+  const $shell = document.getElementById('shell');
+  const $tab = document.getElementById('tab');
+
+  let doc = null;
+  let timer = null;
+
+  // --- notes --------------------------------------------------------------
+  (async () => {
+    if (!api) {
+      $status.textContent = 'preload failed';
+      return;
+    }
+    doc = await api.load();
+    $body.value = doc.pages[doc.activeIndex]?.body ?? '';
+    $path.textContent = await api.dataPath();
+    $status.textContent = `${doc.pages.length} page(s)`;
+    applyDock(await api.getDock(), true);
+  })();
+
+  $body.addEventListener('input', () => {
+    $status.textContent = 'typing…';
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      const page = doc.pages[doc.activeIndex];
+      page.body = $body.value;
+      page.updatedAt = Date.now();
+      const res = await api.save({ pages: doc.pages, activeIndex: doc.activeIndex });
+      $status.textContent = res.ok ? 'saved ' + new Date().toLocaleTimeString() : 'save failed';
+    }, 300);
+  });
+
+  // --- fold animation -----------------------------------------------------
+  // Phase 3 swaps these for GSAP tweens; the 300ms duration already matches
+  // FOLD_MS in main.js so the hinge and the window bounds move as one object.
+  const FOLD_MS = 300;
+  const EASE = 'cubic-bezier(0.32, 0.72, 0.28, 1)';
+
+  /** Hinge transform for the folded-away state, per edge. */
+  function foldedTransform(edge) {
+    switch (edge) {
+      case 'left':   return 'rotateY(-78deg) scaleX(0.35)';
+      case 'top':    return 'rotateX(78deg) scaleY(0.35)';
+      case 'bottom': return 'rotateX(-78deg) scaleY(0.35)';
+      default:       return 'rotateY(78deg) scaleX(0.35)'; // right
+    }
+  }
+
+  const OPEN = { transform: 'rotateY(0deg) rotateX(0deg) scale(1)', opacity: 1 };
+
+  function fold(el, edge, opening) {
+    const shut = { transform: foldedTransform(edge), opacity: 0 };
+    const frames = opening ? [shut, OPEN] : [OPEN, shut];
+    return el.animate(frames, { duration: FOLD_MS, easing: EASE, fill: 'forwards' });
+  }
+
+  let lastCollapsed = false;
+
+  function applyDock(state, immediate) {
+    if (!state) return;
+    document.body.dataset.edge = state.edge;
+
+    if (immediate || state.collapsed === lastCollapsed) {
+      lastCollapsed = state.collapsed;
+      document.body.dataset.collapsed = String(state.collapsed);
+      return;
+    }
+    lastCollapsed = state.collapsed;
+
+    if (state.collapsed) {
+      fold($shell, state.edge, false).onfinish = () => {
+        document.body.dataset.collapsed = 'true';
+        fold($tab, state.edge, true);
+      };
+    } else {
+      document.body.dataset.collapsed = 'false';
+      fold($shell, state.edge, true);
+    }
+  }
+
+  api?.onDock(applyDock);
+
+  document.getElementById('fold').onclick = () => api.collapse();
+  document.getElementById('tabHit').onclick = () => api.expand();
+  // Double-clicking anywhere on the tab also unfolds, since a drag region does
+  // still deliver dblclick on Windows.
+  $tab.ondblclick = () => api.expand();
+  document.getElementById('hide').onclick = () => api.hide();
+  document.getElementById('quit').onclick = () => api.quit();
+  document.getElementById('reveal').onclick = () => api.revealDataFolder();
+
+  const ARROW_EDGE = {
+    ArrowLeft: 'left',
+    ArrowRight: 'right',
+    ArrowUp: 'top',
+    ArrowDown: 'bottom',
+  };
+
+  addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') api.hide();
+    if (e.key === '\\' && e.ctrlKey) api.toggleCollapse(); // fold without the mouse
+
+    // Ctrl+Shift+Arrow throws the widget to that edge — no dragging required.
+    if (e.ctrlKey && e.shiftKey && ARROW_EDGE[e.key]) {
+      e.preventDefault();
+      api.setEdge(ARROW_EDGE[e.key]);
+    }
+  });
+
+  api?.onCommand((cmd) => {
+    if (cmd === 'new-page') $status.textContent = 'tray: new-page';
+  });
+</script>

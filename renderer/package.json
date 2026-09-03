@@ -1,0 +1,21 @@
+{
+  "name": "ghostnote-renderer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "GhostNote's Next.js UI. Built to a static export the Electron shell loads.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build"
+  },
+  "dependencies": {
+    "gsap": "^3.15.0",
+    "next": "^16.3.4",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "autoprefixer": "^10.5.4",
+    "postcss": "^8.5.28",
+    "tailwindcss": "^3.4.19"
+  }
+}

@@ -1,0 +1,125 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* The window is transparent; the panel paints its own surface. */
+html,
+body {
+  height: 100%;
+  margin: 0;
+  background: transparent;
+  overflow: hidden;
+}
+
+body {
+  color: #e7e5e4;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+@layer components {
+  .drag {
+    -webkit-app-region: drag;
+  }
+  .nodrag {
+    -webkit-app-region: no-drag;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Edge-aware chrome. The docked side is squared off and loses its border so
+   the panel reads as growing out of the screen border, and the fold hinges
+   about that same side.
+   -------------------------------------------------------------------------- */
+#stage {
+  height: 100%;
+  perspective: 1100px;
+}
+body[data-edge='right'] #stage { perspective-origin: right center; }
+body[data-edge='left'] #stage { perspective-origin: left center; }
+body[data-edge='top'] #stage { perspective-origin: center top; }
+body[data-edge='bottom'] #stage { perspective-origin: center bottom; }
+
+.shell,
+.tab {
+  background: rgba(12, 12, 15, 0.97);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  will-change: transform, opacity;
+}
+
+body[data-edge='right'] .shell {
+  border-radius: 18px 0 0 18px;
+  border-right: 0;
+  transform-origin: right center;
+}
+body[data-edge='left'] .shell {
+  border-radius: 0 18px 18px 0;
+  border-left: 0;
+  transform-origin: left center;
+}
+body[data-edge='top'] .shell {
+  border-radius: 0 0 18px 18px;
+  border-top: 0;
+  transform-origin: center top;
+}
+body[data-edge='bottom'] .shell {
+  border-radius: 18px 18px 0 0;
+  border-bottom: 0;
+  transform-origin: center bottom;
+}
+
+body[data-edge='right'] .tab {
+  border-radius: 8px 0 0 8px;
+  border-right: 0;
+  transform-origin: right center;
+}
+body[data-edge='left'] .tab {
+  border-radius: 0 8px 8px 0;
+  border-left: 0;
+  transform-origin: left center;
+}
+body[data-edge='top'] .tab {
+  border-radius: 0 0 8px 8px;
+  border-top: 0;
+  transform-origin: center top;
+}
+body[data-edge='bottom'] .tab {
+  border-radius: 8px 8px 0 0;
+  border-bottom: 0;
+  transform-origin: center bottom;
+}
+
+/* Chevrons: the base glyph points right, so rotate it per edge. */
+body[data-edge='left'] .fold-glyph { transform: rotate(180deg); }
+body[data-edge='top'] .fold-glyph { transform: rotate(-90deg); }
+body[data-edge='bottom'] .fold-glyph { transform: rotate(90deg); }
+
+body[data-edge='right'] .tab-glyph { transform: rotate(180deg); }
+body[data-edge='top'] .tab-glyph { transform: rotate(90deg); }
+body[data-edge='bottom'] .tab-glyph { transform: rotate(-90deg); }
+
+/* Folded, the whole window is a grab handle (the chevron opts back out). */
+body[data-collapsed='true'] #stage {
+  -webkit-app-region: drag;
+}
+
+/* --------------------------------------------------------------------------
+   Scrollbar for note bodies that outgrow the panel.
+   -------------------------------------------------------------------------- */
+.scroll-thin {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
+}
+.scroll-thin::-webkit-scrollbar {
+  width: 7px;
+}
+.scroll-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scroll-thin::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 99px;
+}
+.scroll-thin::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.26);
+}

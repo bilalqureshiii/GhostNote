@@ -1,0 +1,48 @@
+{
+  "name": "ghostnote",
+  "version": "0.1.0",
+  "private": false,
+  "description": "A frameless, always-on-top floating note widget you launch from your terminal.",
+  "main": "electron/main.js",
+  "bin": {
+    "ghostnote": "bin/cli.js"
+  },
+  "files": [
+    "bin/",
+    "electron/",
+    "renderer/out/"
+  ],
+  "scripts": {
+    "start": "electron .",
+    "ghostnote": "node bin/cli.js",
+    "ui:install": "npm --prefix renderer install",
+    "ui:dev": "npm --prefix renderer run dev",
+    "build": "npm --prefix renderer run build",
+    "dev": "npm run build && node bin/cli.js --debug",
+    "prepublishOnly": "npm run ui:install && npm run build"
+  },
+  "keywords": [
+    "electron",
+    "notes",
+    "widget",
+    "cli",
+    "floating",
+    "always-on-top"
+  ],
+  "author": "Bilal Qureshi",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bilalqureshiii/GhostNote.git"
+  },
+  "bugs": {
+    "url": "https://github.com/bilalqureshiii/GhostNote/issues"
+  },
+  "homepage": "https://github.com/bilalqureshiii/GhostNote#readme",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "electron": "^44.1.1"
+  }
+}
