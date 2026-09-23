@@ -4,3 +4,4 @@ renderer/out/
 dist/
 *.log
 .DS_Store
+*.tgz
