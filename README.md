@@ -5,15 +5,14 @@ to the edge of your screen, folds away when you don't need it, and saves every
 keystroke on its own.
 
 ```bash
-npm install -g https://github.com/bilalqureshiii/GhostNote/releases/download/v0.1.0/ghostnote-0.1.0.tgz
+npm install -g ghostnote
 ghostnote
 ```
 
 Close the terminal — the widget stays.
 
-> **Requires Node 18+.** GhostNote isn't on the npm registry yet, so install it
-> from the [latest release](https://github.com/bilalqureshiii/GhostNote/releases/latest).
-> Once it's published, `npm install -g ghostnote` will do the same thing.
+> **Requires Node 18+.** Prefer a tarball? Grab one from the
+> [latest release](https://github.com/bilalqureshiii/GhostNote/releases/latest).
 
 ---
 
