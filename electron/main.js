@@ -33,6 +33,7 @@ const {
   nativeImage,
   protocol,
   net,
+  powerMonitor,
 } = electron;
 const fs = require('fs');
 const path = require('path');
@@ -88,6 +89,86 @@ let dock = { edge: 'right', pos: 0, collapsed: false };
 let tweenTimer = null;
 let dragTimer = null;
 
+// --- reminders ---
+// A polling tick rather than one long setTimeout: timers do not survive sleep
+// or hibernate reliably, and a missed reminder is worse than a late one.
+const REMINDER_TICK = 20000;
+
+let reminderTicker = null;
+let nextReminderTimer = null;
+let alertQueue = [];
+let alerting = false;
+let alertRestore = null;
+let rendererReady = false;
+
+// An alert is its own shape: a small card sized to the reminder text, rather
+// than the full note panel. The renderer measures itself and tells us how tall
+// it needs to be.
+let alertActive = false;
+let alertHeight = 110;
+const ALERT_MIN_H = 88;
+const ALERT_MAX_H = 300;
+
+/**
+ * The next occurrence of a recurring reminder strictly after `after`, or null
+ * for a one-off. Walking real Date objects rather than adding milliseconds
+ * keeps it correct across DST changes and uneven month lengths.
+ */
+function nextOccurrence(r, after) {
+  const type = r.repeat && r.repeat.type;
+  if (!type || type === "none") return null;
+
+  const lead = (r.lead || 0) * 60000;
+  const d = new Date(r.at);
+  const GUARD = 800;
+  let i = 0;
+
+  const step = () => {
+    if (type === "daily") {
+      d.setDate(d.getDate() + 1);
+      return;
+    }
+    if (type === "weekly") {
+      const days =
+        r.repeat.days && r.repeat.days.length ? r.repeat.days : [new Date(r.at).getDay()];
+      do {
+        d.setDate(d.getDate() + 1);
+        i++;
+      } while (!days.includes(d.getDay()) && i < GUARD);
+      return;
+    }
+    if (type === "monthly") {
+      // Keep the original day-of-month and clamp it into shorter months, or
+      // setMonth() would roll "31 Jan" over into 3 March.
+      const day = r.repeat.day || new Date(r.at).getDate();
+      d.setDate(1);
+      d.setMonth(d.getMonth() + 1);
+      const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+      d.setDate(Math.min(day, lastDay));
+    }
+  };
+
+  // Always move past the occurrence that just fired. With a lead time that
+  // occurrence is still in the future, so comparing against `after` alone
+  // would leave it unchanged and the reminder would fire on a loop.
+  step();
+
+  // Then skip anything whose warning time has already gone by — a week of
+  // downtime should surface one reminder, not seven.
+  while (d.getTime() - lead <= after && i++ < GUARD) step();
+
+  return d.getTime();
+}
+
+/** When a reminder actually fires: its time, minus any advance warning. */
+const fireAt = (r) => r.at - (r.lead || 0) * 60000;
+
+function alertSize(edge) {
+  return isHorizontal(edge)
+    ? { width: 440, height: alertHeight }
+    : { width: 340, height: alertHeight };
+}
+
 // ---------------------------------------------------------------------------
 // Single instance
 // ---------------------------------------------------------------------------
@@ -127,6 +208,9 @@ function currentArea() {
 
 /** Window size for a dock state — both panel and tab rotate with the edge. */
 function sizeFor(state) {
+  // An alert overrides both panel and tab: it is content-sized.
+  if (alertActive) return alertSize(state.edge);
+
   if (state.collapsed) {
     return isHorizontal(state.edge)
       ? { width: TAB_LENGTH, height: TAB_THICK }
@@ -578,6 +662,126 @@ function setAutostart(enabled) {
 }
 
 // ---------------------------------------------------------------------------
+// Reminders
+// ---------------------------------------------------------------------------
+
+/**
+ * Arms an exact timer for the next reminder due. The 20s tick alone would fire
+ * things up to 20s late; the tick stays as a backstop for sleep and clock
+ * changes, which a long timeout cannot survive.
+ */
+function scheduleNextReminder() {
+  if (nextReminderTimer) clearTimeout(nextReminderTimer);
+  if (!store) return;
+
+  const now = Date.now();
+  const upcoming = store.load().reminders.filter((r) => !r.notified && fireAt(r) > now);
+  if (!upcoming.length) return;
+
+  const soonest = Math.min(...upcoming.map(fireAt));
+  // Re-arm at least every few hours so a very distant timer cannot drift.
+  const delay = Math.max(250, Math.min(soonest - now, 6 * 60 * 60 * 1000));
+
+  nextReminderTimer = setTimeout(() => {
+    checkDueReminders();
+    scheduleNextReminder();
+  }, delay);
+}
+
+function startReminderLoop() {
+  if (reminderTicker) clearInterval(reminderTicker);
+  reminderTicker = setInterval(checkDueReminders, REMINDER_TICK);
+  scheduleNextReminder();
+}
+
+/**
+ * Fires anything past due. Reminders are marked notified in one write before
+ * being queued, so a crash mid-alert cannot replay them on the next launch.
+ */
+function checkDueReminders() {
+  if (!store || !rendererReady) return;
+
+  const now = Date.now();
+  const all = store.load().reminders;
+  const due = all.filter((r) => !r.notified && fireAt(r) <= now);
+  if (!due.length) return;
+
+  const ids = new Set(due.map((r) => r.id));
+  store.update({
+    reminders: all.map((r) => {
+      if (!ids.has(r.id)) return r;
+      const next = nextOccurrence(r, now);
+      // A recurring reminder rolls forward and re-arms; a one-off retires.
+      return next ? { ...r, at: next, notified: false } : { ...r, notified: true };
+    }),
+  });
+
+  // Anything more than a minute behind was missed while we were closed.
+  alertQueue.push(...due.map((r) => ({ ...r, late: now - fireAt(r) > 60000 })));
+  if (!alerting) presentNextAlert();
+  scheduleNextReminder();
+}
+
+/** Brings the widget out of whatever state it was in and shows one reminder. */
+function presentNextAlert() {
+  const next = alertQueue.shift();
+  if (!next) {
+    alerting = false;
+    return;
+  }
+  if (!win || win.isDestroyed()) return;
+
+  alerting = true;
+  // Remember how to put things back, but only for the first of a run.
+  if (!alertRestore) {
+    alertRestore = { collapsed: dock.collapsed, hidden: !win.isVisible(), pos: dock.pos };
+  }
+
+  // Grow the card out of wherever the widget currently sits, centred on it,
+  // rather than unfolding the whole panel.
+  const b = win.getBounds();
+  const horizontal = isHorizontal(dock.edge);
+  const centre = horizontal ? b.x + b.width / 2 : b.y + b.height / 2;
+
+  alertActive = true;
+  alertHeight = ALERT_MIN_H;
+
+  const size = alertSize(dock.edge);
+  const run = horizontal ? size.width : size.height;
+  dock = { ...dock, pos: Math.round(centre - run / 2) };
+
+  if (!win.isVisible()) win.show();
+  tweenTo(boundsFor(dock), FOLD_MS);
+  win.webContents.send("ghostnote:reminder", next);
+}
+
+/** Renderer is done with an alert: show the next, or restore the old state. */
+function finishAlert() {
+  if (alertQueue.length) {
+    presentNextAlert();
+    return;
+  }
+
+  alerting = false;
+  alertActive = false;
+  const restore = alertRestore;
+  alertRestore = null;
+  if (!restore || !win || win.isDestroyed()) return;
+
+  // Back to whatever shape and spot it held before the alert grew out of it.
+  dock = { ...dock, collapsed: restore.collapsed, pos: restore.pos };
+  notifyDock();
+  tweenTo(boundsFor(dock), FOLD_MS);
+
+  if (restore.hidden) {
+    // Wait out the fold so it does not vanish mid-animation.
+    setTimeout(() => {
+      if (win && !win.isDestroyed() && !alerting) win.hide();
+    }, FOLD_MS + 80);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Tray
 // ---------------------------------------------------------------------------
 /** Rebuilt on every dock change so the radio state matches reality. */
@@ -659,6 +863,47 @@ function registerIpc() {
   ipcMain.handle('dock:expand', () => setCollapsed(false));
   ipcMain.handle('dock:toggle', () => setCollapsed(!dock.collapsed));
   ipcMain.handle('dock:setEdge', (_event, edge) => dockTo(edge));
+
+  // --- reminders ---
+  // The renderer owns the list; main owns whether each has fired.
+  ipcMain.handle("reminders:save", (_event, list) => {
+    if (!Array.isArray(list)) return { ok: false, error: "invalid payload" };
+
+    const previous = new Map(store.load().reminders.map((r) => [r.id, r]));
+    const merged = list.map((r) => {
+      const prev = previous.get(r.id);
+      // Moving a reminder to a new time arms it again.
+      const rescheduled = prev && (prev.at !== r.at || (prev.lead || 0) !== (r.lead || 0));
+      return {
+        ...r,
+        notified: rescheduled ? false : prev ? prev.notified : Boolean(r.notified),
+      };
+    });
+
+    store.update({ reminders: merged });
+    checkDueReminders();
+    scheduleNextReminder();
+    return { ok: true };
+  });
+
+  ipcMain.handle("reminder:done", () => finishAlert());
+
+  // The alert measures its own content and asks for that height.
+  ipcMain.handle("alert:size", (_event, height) => {
+    const h = Math.round(Number(height));
+    if (!alertActive || !Number.isFinite(h)) return;
+    const clamped = Math.min(ALERT_MAX_H, Math.max(ALERT_MIN_H, h));
+    if (clamped === alertHeight) return;
+    alertHeight = clamped;
+    tweenTo(boundsFor(dock), 160);
+  });
+
+  // The renderer is mounted and listening; safe to fire missed reminders now.
+  ipcMain.handle("ui:ready", () => {
+    rendererReady = true;
+    checkDueReminders();
+    scheduleNextReminder();
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -679,6 +924,10 @@ app.whenReady().then(() => {
   registerIpc();
   createWindow();
   createTray();
+  startReminderLoop();
+
+  // Waking from sleep can skip many ticks at once.
+  powerMonitor.on("resume", checkDueReminders);
 
   // Opt out / back in from the terminal.
   if (process.argv.includes('--disable-autostart')) setAutostart(false);
@@ -719,4 +968,8 @@ app.on('session-end', () => {
   store.flush();
 });
 
-app.on('will-quit', () => globalShortcut.unregisterAll());
+app.on('will-quit', () => {
+  globalShortcut.unregisterAll();
+  if (reminderTicker) clearInterval(reminderTicker);
+  if (nextReminderTimer) clearTimeout(nextReminderTimer);
+});

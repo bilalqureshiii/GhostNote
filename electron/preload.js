@@ -34,6 +34,26 @@ contextBridge.exposeInMainWorld('ghostnote', {
   toggleCollapse: () => ipcRenderer.invoke('dock:toggle'),
   setEdge: (edge) => ipcRenderer.invoke('dock:setEdge', edge),
 
+  // --- reminders -----------------------------------------------------------
+  /** Persist the whole reminder list. Main keeps ownership of `notified`. */
+  saveReminders: (list) => ipcRenderer.invoke("reminders:save", list),
+
+  /** Tell main how tall the alert card needs to be. */
+  resizeAlert: (height) => ipcRenderer.invoke("alert:size", height),
+
+  /** The alert has been dismissed or timed out; main restores the old state. */
+  reminderDone: () => ipcRenderer.invoke("reminder:done"),
+
+  /** Mounted and listening — lets main fire reminders missed while we were off. */
+  uiReady: () => ipcRenderer.invoke("ui:ready"),
+
+  /** A reminder has come due. */
+  onReminder: (handler) => {
+    const listener = (_event, reminder) => handler(reminder);
+    ipcRenderer.on("ghostnote:reminder", listener);
+    return () => ipcRenderer.removeListener("ghostnote:reminder", listener);
+  },
+
   /** Fires whenever the widget re-docks or folds. Drives the fold animation. */
   onDock: (handler) => {
     const listener = (_event, state) => handler(state);

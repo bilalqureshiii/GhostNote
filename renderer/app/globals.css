@@ -3,6 +3,12 @@
 @tailwind utilities;
 
 /* The window is transparent; the panel paints its own surface. */
+/* Native controls (select popups, the time picker, scrollbars) follow this.
+   Without it Chromium renders them light against the dark panel. */
+:root {
+  color-scheme: dark;
+}
+
 html,
 body {
   height: 100%;
@@ -122,4 +128,24 @@ body[data-collapsed='true'] #stage {
 }
 .scroll-thin::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.26);
+}
+
+/* --------------------------------------------------------------------------
+   Calendar layout. Portrait stacks the month above the day's list; landscape
+   (top/bottom edges, 620x300) puts them side by side so the grid still fits.
+   -------------------------------------------------------------------------- */
+.cal-wrap {
+  flex-direction: column;
+}
+.cal-month {
+  width: 100%;
+}
+
+body[data-edge='top'] .cal-wrap,
+body[data-edge='bottom'] .cal-wrap {
+  flex-direction: row;
+}
+body[data-edge='top'] .cal-month,
+body[data-edge='bottom'] .cal-month {
+  width: 260px;
 }

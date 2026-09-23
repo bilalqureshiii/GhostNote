@@ -3,6 +3,9 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { gsap } from 'gsap';
 
+import Calendar from '../components/Calendar';
+import ReminderAlert from '../components/ReminderAlert';
+
 const MAX_PAGES = 24;
 
 const ARROW_EDGE = {
@@ -66,6 +69,21 @@ const Plus = ({ className = '' }) => (
   </svg>
 );
 
+const CalendarIcon = ({ className = "" }) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+       strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <rect x="3" y="5" width="18" height="16" rx="2" />
+    <path d="M3 10h18M8 3v4M16 3v4" />
+  </svg>
+);
+
+const NoteIcon = ({ className = "" }) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+       strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <path d="M5 4h14v16H5zM8 9h8M8 13h8M8 17h5" />
+  </svg>
+);
+
 /** Static render of a page, used for both faces mid-turn. */
 function Preview({ page }) {
   return (
@@ -85,6 +103,11 @@ export default function GhostNote() {
 
   /** Non-null only while a page is mid-turn: { dir, from }. */
   const [turn, setTurn] = useState(null);
+
+  /** 'notes' or 'reminders' — the whole panel flips between the two. */
+  const [view, setView] = useState("notes");
+  const [reminders, setReminders] = useState([]);
+  const [alert, setAlert] = useState(null);
 
   const shellRef = useRef(null);
   const tabRef = useRef(null);
@@ -107,7 +130,10 @@ export default function GhostNote() {
     g.load().then((doc) => {
       setPages(doc.pages);
       setIndex(Math.min(doc.activeIndex ?? 0, doc.pages.length - 1));
+      setReminders(doc.reminders || []);
       setReady(true);
+      // Tells main we are listening, which releases any missed reminders.
+      g.uiReady?.();
     });
 
     g.getDock().then((state) => {
@@ -117,6 +143,7 @@ export default function GhostNote() {
     });
 
     const offDock = g.onDock((state) => setDock(state));
+    const offReminder = g.onReminder?.((r) => setAlert(r));
     const offCmd = g.onCommand((cmd) => {
       if (cmd === 'new-page') addPageRef.current?.();
     });
@@ -124,6 +151,7 @@ export default function GhostNote() {
     return () => {
       offDock?.();
       offCmd?.();
+      offReminder?.();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -250,6 +278,39 @@ export default function GhostNote() {
     addPageRef.current = addPage;
   }, [addPage]);
 
+  // --- reminders ----------------------------------------------------------
+  const persistReminders = useCallback((list) => {
+    setReminders(list);
+    bridge()?.saveReminders?.(list);
+  }, []);
+
+  const addReminder = useCallback(
+    (text, at, lead = 0, repeat = { type: "none", days: [], day: 0 }) => {
+      const id =
+        typeof crypto !== "undefined" && crypto.randomUUID
+          ? crypto.randomUUID()
+          : Math.random().toString(16).slice(2);
+      const next = [
+        ...reminders,
+        { id, text, at, lead, repeat, notified: false, createdAt: Date.now() },
+      ];
+      next.sort((a, b) => a.at - b.at);
+      persistReminders(next);
+    },
+    [reminders, persistReminders]
+  );
+
+  const deleteReminder = useCallback(
+    (id) => persistReminders(reminders.filter((r) => r.id !== id)),
+    [reminders, persistReminders]
+  );
+
+  /** Alert is done: main folds the widget back to however it was. */
+  const dismissAlert = useCallback(() => {
+    setAlert(null);
+    bridge()?.reminderDone?.();
+  }, []);
+
   /**
    * The turn itself: the leaf hinges about its left edge, exactly like lifting
    * a page in a bound book, while a gradient sweeps across it to fake the
@@ -333,8 +394,8 @@ export default function GhostNote() {
           specificity, so the utility wins and `hidden` does nothing. */}
       <div
         ref={shellRef}
-        style={{ display: showTab ? 'none' : 'flex' }}
-        className="shell h-full flex-col overflow-hidden"
+        style={{ display: alert || showTab ? 'none' : 'flex' }}
+        className="shell relative h-full flex-col overflow-hidden"
       >
         <header className="drag flex flex-none items-center gap-2 border-b border-white/[0.06] px-3 py-2">
           <span className="flex gap-1">
@@ -351,13 +412,27 @@ export default function GhostNote() {
             {status || (pages.length ? `${index + 1} / ${pages.length}` : '')}
           </span>
 
+          {view === "notes" ? (
+            <button
+              onClick={addPage}
+              disabled={pages.length >= MAX_PAGES}
+              title="New page  (Ctrl+N)"
+              className="nodrag grid h-[22px] w-[22px] place-items-center rounded-md text-white/40 transition hover:bg-white/[0.08] hover:text-ink-text disabled:opacity-20 disabled:hover:bg-transparent"
+            >
+              <Plus className="h-[13px] w-[13px]" />
+            </button>
+          ) : null}
+
           <button
-            onClick={addPage}
-            disabled={pages.length >= MAX_PAGES}
-            title="New page  (Ctrl+N)"
-            className="nodrag grid h-[22px] w-[22px] place-items-center rounded-md text-white/40 transition hover:bg-white/[0.08] hover:text-ink-text disabled:opacity-20 disabled:hover:bg-transparent"
+            onClick={() => setView(view === "notes" ? "reminders" : "notes")}
+            title={view === "notes" ? "Reminders" : "Notes"}
+            className="nodrag grid h-[22px] w-[22px] place-items-center rounded-md text-white/40 transition hover:bg-white/[0.08] hover:text-ink-text"
           >
-            <Plus className="h-[13px] w-[13px]" />
+            {view === "notes" ? (
+              <CalendarIcon className="h-[13px] w-[13px]" />
+            ) : (
+              <NoteIcon className="h-[13px] w-[13px]" />
+            )}
           </button>
 
           <button
@@ -369,8 +444,13 @@ export default function GhostNote() {
           </button>
         </header>
 
-        {/* --------------------------- the book --------------------------- */}
-        <div className="relative min-h-0 flex-1" style={{ perspective: '1600px' }}>
+        {view === "reminders" ? (
+          <div className="min-h-0 flex-1">
+            <Calendar reminders={reminders} onAdd={addReminder} onDelete={deleteReminder} />
+          </div>
+        ) : (
+          /* ------------------------- the book ------------------------- */
+          <div className="relative min-h-0 flex-1" style={{ perspective: '1600px' }}>
           {/* Spine shading down the hinge side. */}
           <div className="pointer-events-none absolute inset-y-0 left-0 z-20 w-3 bg-gradient-to-r from-black/25 to-transparent" />
 
@@ -406,7 +486,10 @@ export default function GhostNote() {
           )}
         </div>
 
+        )}
+
         {/* --------------------------- page nav --------------------------- */}
+        {view === "notes" ? (
         <footer className="nodrag flex flex-none items-center gap-2 border-t border-white/[0.06] px-3 py-2">
           <button
             onClick={() => goTo(index - 1)}
@@ -439,12 +522,19 @@ export default function GhostNote() {
             <Chevron className="h-[13px] w-[13px]" />
           </button>
         </footer>
+        ) : null}
+
       </div>
+
+      {/* ----------------------------- alert ----------------------------- */}
+      {/* Its own surface: the window shrinks to the card, so the panel and
+          tab step aside entirely rather than being covered. */}
+      {alert ? <ReminderAlert reminder={alert} onDone={dismissAlert} /> : null}
 
       {/* ------------------------------ tab ------------------------------ */}
       <div
         ref={tabRef}
-        style={{ display: showTab ? 'flex' : 'none' }}
+        style={{ display: !alert && showTab ? 'flex' : 'none' }}
         className="tab absolute inset-0 items-center justify-center"
       >
         <button

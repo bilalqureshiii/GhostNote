@@ -15,6 +15,7 @@ const crypto = require('crypto');
 
 const SCHEMA_VERSION = 1;
 const MAX_PAGES = 24;
+const MAX_REMINDERS = 200;
 const EDGES = ['left', 'right', 'top', 'bottom'];
 
 function newId() {
@@ -32,6 +33,7 @@ function defaultData() {
     activeIndex: 0,
     pages: [blankPage('First Note')],
     dock: null,
+    reminders: [],
     settings: { autostartInitialised: false },
   };
 }
@@ -40,6 +42,29 @@ function defaultData() {
  * Coerces whatever we read off disk into a shape the renderer can trust.
  * Never throws: a corrupt field is replaced, not fatal.
  */
+const REPEATS = ["none", "daily", "weekly", "monthly"];
+
+/**
+ * Recurrence rule. `days` is only meaningful for weekly (0 = Sunday); the
+ * monthly rule takes its day-of-month from the reminder's own date.
+ */
+function normaliseRepeat(input) {
+  const raw = input && typeof input === "object" ? input : {};
+  const type = REPEATS.includes(raw.type) ? raw.type : "none";
+  const days =
+    type === "weekly" && Array.isArray(raw.days)
+      ? [...new Set(raw.days.filter((d) => Number.isInteger(d) && d >= 0 && d <= 6))].sort()
+      : [];
+  // Monthly keeps its original day-of-month so that clamping into February
+  // does not permanently drag the series back to the 28th.
+  const day =
+    type === "monthly" && Number.isInteger(raw.day) && raw.day >= 1 && raw.day <= 31
+      ? raw.day
+      : 0;
+
+  return { type, days, day };
+}
+
 function normalise(input) {
   const base = defaultData();
   if (!input || typeof input !== 'object') return base;
@@ -74,11 +99,31 @@ function normalise(input) {
         }
       : null;
 
+  // Scheduled reminders. `at` is an absolute epoch ms so a reminder survives
+  // restarts and timezone changes without drifting.
+  const reminders = Array.isArray(input.reminders)
+    ? input.reminders
+        .filter((r) => r && typeof r === "object" && Number.isFinite(r.at))
+        .slice(0, MAX_REMINDERS)
+        .map((r) => ({
+          id: typeof r.id === "string" && r.id ? r.id : newId(),
+          text: typeof r.text === "string" ? r.text.slice(0, 500) : "",
+          at: Math.round(r.at),
+          // Minutes of advance warning. 0 fires at the event time itself.
+          lead: Number.isFinite(r.lead) ? Math.min(10080, Math.max(0, Math.round(r.lead))) : 0,
+          repeat: normaliseRepeat(r.repeat),
+          notified: Boolean(r.notified),
+          createdAt: Number.isFinite(r.createdAt) ? r.createdAt : Date.now(),
+        }))
+        .sort((a, b) => a.at - b.at)
+    : [];
+
   return {
     version: SCHEMA_VERSION,
     activeIndex: Math.min(Math.max(0, Number(input.activeIndex) || 0), pages.length - 1),
     pages,
     dock,
+    reminders,
     settings: {
       // Records that first-run autostart has been applied, so a user who
       // later switches it off doesn't get it switched back on next launch.
@@ -182,4 +227,4 @@ class Store {
   }
 }
 
-module.exports = { Store, blankPage, defaultData, SCHEMA_VERSION, MAX_PAGES };
+module.exports = { Store, blankPage, defaultData, SCHEMA_VERSION, MAX_PAGES, MAX_REMINDERS };
