@@ -101,6 +101,15 @@ let alerting = false;
 let alertRestore = null;
 let rendererReady = false;
 
+// --- first reveal ---
+// The window is created hidden to avoid a white flash, so *something* has to
+// show it. Relying on one event alone is how it ended up invisible after a
+// cold boot: see revealWindow().
+let revealed = false;
+let revealTimer = null;
+const REVEAL_GRACE_MS = 900; // painted, but give the data a moment to arrive
+const REVEAL_DEADLINE_MS = 4000; // absolute backstop
+
 // An alert is its own shape: a small card sized to the reminder text, rather
 // than the full note panel. The renderer measures itself and tells us how tall
 // it needs to be.
@@ -486,6 +495,29 @@ function registerProtocol() {
   });
 }
 
+/**
+ * Shows the widget, once, whichever signal arrives first.
+ *
+ * Previously this hung off `ready-to-show` alone, which fires on the
+ * renderer's first paint. At login that paint competes with every other
+ * startup app for disk and GPU, and a window created with show:false is a
+ * hidden renderer, which Chromium deprioritises — so the paint could be very
+ * late or never come, leaving a running process with no visible window and a
+ * tray icon as the only way back. Now three things race: the UI reporting its
+ * data is loaded (best), a grace period after first paint, and a hard deadline.
+ */
+function revealWindow() {
+  if (revealed || !win || win.isDestroyed()) return;
+  revealed = true;
+  if (revealTimer) {
+    clearTimeout(revealTimer);
+    revealTimer = null;
+  }
+  win.show();
+  win.focus();
+  notifyDock(); // renderer needs the edge to orient its chrome
+}
+
 function createWindow() {
   const area = screen.getPrimaryDisplay().workArea;
   const saved = store.load().dock;
@@ -521,6 +553,8 @@ function createWindow() {
       nodeIntegration: false,
       sandbox: false,
       spellcheck: true,
+      // Created hidden; without this Chromium throttles it before first paint.
+      backgroundThrottling: false,
     },
   });
 
@@ -532,10 +566,19 @@ function createWindow() {
   if (hasExport()) win.loadURL('ghostnote://app/index.html');
   else win.loadFile(path.join(__dirname, 'placeholder.html'));
 
+  revealed = false;
+  if (revealTimer) clearTimeout(revealTimer);
+  revealTimer = setTimeout(revealWindow, REVEAL_DEADLINE_MS);
+
+  // Painted. Prefer to wait for the UI to say it has data, but not forever.
   win.once('ready-to-show', () => {
-    win.show();
-    win.focus();
-    notifyDock(); // renderer needs the edge to orient itself
+    if (revealTimer) clearTimeout(revealTimer);
+    revealTimer = setTimeout(revealWindow, REVEAL_GRACE_MS);
+  });
+
+  // If the page fails to paint at all, this still fires.
+  win.webContents.once('did-finish-load', () => {
+    if (!revealed && !revealTimer) revealTimer = setTimeout(revealWindow, REVEAL_GRACE_MS);
   });
 
   // Closing (Esc, the UI button, Alt+F4) hides. Only the tray truly quits.
@@ -577,6 +620,11 @@ function showWidget() {
   if (!win || win.isDestroyed()) {
     createWindow();
     return;
+  }
+  revealed = true; // an explicit show settles the first-reveal race
+  if (revealTimer) {
+    clearTimeout(revealTimer);
+    revealTimer = null;
   }
   win.show();
   win.focus();
@@ -901,6 +949,7 @@ function registerIpc() {
   // The renderer is mounted and listening; safe to fire missed reminders now.
   ipcMain.handle("ui:ready", () => {
     rendererReady = true;
+    revealWindow(); // data is in; show a populated panel, not an empty one
     checkDueReminders();
     scheduleNextReminder();
   });

@@ -127,20 +127,25 @@ export default function GhostNote() {
       return;
     }
 
-    g.load().then((doc) => {
-      setPages(doc.pages);
-      setIndex(Math.min(doc.activeIndex ?? 0, doc.pages.length - 1));
-      setReminders(doc.reminders || []);
-      setReady(true);
-      // Tells main we are listening, which releases any missed reminders.
-      g.uiReady?.();
-    });
+    // Main keeps the window hidden until this resolves, so the widget appears
+    // already populated and already the right shape — no empty panel, and no
+    // flash of the full panel before folding down to a tab.
+    Promise.all([g.load(), g.getDock()])
+      .then(([doc, state]) => {
+        setPages(doc.pages);
+        setIndex(Math.min(doc.activeIndex ?? 0, doc.pages.length - 1));
+        setReminders(doc.reminders || []);
 
-    g.getDock().then((state) => {
-      setDock(state);
-      setShowTab(state.collapsed);
-      lastCollapsed.current = state.collapsed;
-    });
+        setDock(state);
+        setShowTab(state.collapsed);
+        lastCollapsed.current = state.collapsed;
+
+        setReady(true);
+      })
+      .finally(() => {
+        // Also releases any reminders missed while we were closed.
+        g.uiReady?.();
+      });
 
     const offDock = g.onDock((state) => setDock(state));
     const offReminder = g.onReminder?.((r) => setAlert(r));
